@@ -1,0 +1,146 @@
+# Morphometrics {#sec-metrics}
+
+In @sec-basics we saw that going from a geometry visualisation to a metric of bearings was able to pull out considerable insight even though it was a single summary of a complex geometry. Morphometrics pull out increasing complex representations out of simple geometries like buildings and polygons. The [`momepy` suite](https://docs.momepy.org/en/v0.9.0/api.html) [@fleischmannMomepyUrbanMorphology2019] has an exhaustive set of dimensional as well as contextual metrics that summarise the polygon and line geometries of urban structure.  
+
+```{r}
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(arrow)
+library(geoarrow)
+library(here)
+library(tidyr)
+library(patchwork)
+```
+
+
+```{r, output=FALSE}
+# Load data
+streets <- open_dataset(here("data", "outputs", "osm_streets_enriched_Grey Lynn.parquet")) |> st_as_sf()
+buildings <- open_dataset(here("data", "outputs", "osm_buildings_enriched_Grey Lynn.parquet")) |> st_as_sf()
+tessellation = open_dataset(here("data", "outputs", "osm_tessellation_enriched_Grey Lynn.parquet")) |> st_as_sf()
+blocks = open_dataset(here("data", "outputs", "osm_blocks_enriched_Grey Lynn.parquet")) |> st_as_sf()
+merged = open_dataset(here("data", "outputs", "merged_enriched_Grey Lynn.parquet")) |> st_as_sf()
+buildings_akl = open_dataset(here("data", "outputs", "osm_buildings_enriched_Auckland.parquet")) |> st_as_sf()
+tessellation_akl = open_dataset(here("data", "outputs", "osm_tessellation_enriched_Auckland.parquet")) |> st_as_sf()
+perc = open_dataset(here("data", "outputs", "percentiles_joined_Auckland.parquet")) |> as_tibble()
+suburbs <- st_read(here("data", "nz-suburbs-and-localities.gpkg"))
+
+# Clipped streets / buildings to suburb
+streets_with_suburb <- st_join(streets, suburbs |> 
+    filter(territorial_authority == "Auckland") |> 
+    dplyr::select(name) |> 
+    st_transform(2193), join = st_within, left = TRUE) |>
+    filter(name == "Grey Lynn")
+
+buildings_with_suburb <- st_join(buildings, suburbs |> 
+    filter(territorial_authority == "Auckland") |> 
+    dplyr::select(name) |> 
+    st_transform(2193), join = st_within, left = TRUE) |>
+    filter(name == "Grey Lynn")
+
+blocks_with_suburb <- st_join(blocks, suburbs |> 
+    filter(territorial_authority == "Auckland") |> 
+    dplyr::select(name) |> 
+    st_transform(2193), join = st_within, left = TRUE) |>
+    filter(name == "Grey Lynn")
+
+tessellation_with_suburb <- st_join(tessellation, suburbs |> 
+    filter(territorial_authority == "Auckland") |> 
+    dplyr::select(name) |> 
+    st_transform(2193), join = st_within, left = TRUE) |>
+    filter(name == "Grey Lynn")
+
+perc_with_suburb <- st_join(
+    perc |> mutate(geometry = tessellation_akl$geometry) |> st_as_sf(), 
+    suburbs |> 
+        filter(territorial_authority == "Auckland") |> 
+        dplyr::select(name) |> 
+        st_transform(2193), join = st_within, left = TRUE) |>
+        filter(name == "Grey Lynn"
+    )
+```
+
+
+```{r}
+#| fig-align: center
+
+p1 <- ggplot() + 
+    geom_sf(data = buildings_with_suburb, aes(fill=building_area, colour=building_area)) + 
+    coord_sf(expand = FALSE) +
+    theme_void() 
+
+p2 <- ggplot() + 
+    geom_sf(data = streets_with_suburb, aes(linewidth=width)) + 
+    coord_sf(expand = FALSE) +
+    theme_void() + 
+    scale_linewidth(range=c(0.1,1))
+
+p1 | p2
+```
+
+
+The dimensions that can be derived from buildings and streets increase our understanding beyond simple figure-ground diagrams and street orientation plots. But buildings and streets are only two aspects of urban structure. Higher order structures like blocks and plots (parcels) offer deeper insight and more complex metrics that can be used to better describe urban character. 
+
+Instead of adding another dataset heavy dataset of land plots / parcels, `momepy` has a clever "morphological tessellation"  algorithm that creates an approximation of a plot. The tessellation cell is a boundary around every building created in a way that equally repels nearby cells. Once derived from the buildings dataset, it can be used for complex morphometrics like covered area ratio (CAR). 
+
+> “.. the morphological cell, its smallest spatial unit which delineates the portion of land around each building that is closer to it than to any other but no further than 100 m. As such, the morphological tessellation captures the topological relations between individual cells and influence that each building exerts on the surrounding space.”
+
+The tessellation cell is also the core unit for the clustering algorithm used to identify urban typologies. Morphometrics derived from buildings and streets are mapped onto the tessellation cell in addition to metrics derived from the tessellation itself like the covered area and neighbours metrics. 
+
+```{r}
+#| fig-align: center
+
+p1 <- ggplot() + 
+    geom_sf(data = buildings_with_suburb) +
+    geom_sf(data = tessellation_with_suburb, fill = NA, colour = "red") + 
+    theme_void()
+
+
+p2 <- ggplot() + 
+    geom_sf(data = buildings_with_suburb) +
+    geom_sf(data = tessellation_with_suburb, fill = NA, colour = "red") + 
+    xlim(1755100, 1755400) +
+    ylim(5918300, 5918600) +
+    theme_void()
+
+p1 | p2
+```
+
+
+Another higher order structure is 'blocks'. Blocks in `momepy` are constructed by dissolving the tessellation cell to polygons constructed from street geometries. Blocks are a useful entity for visualisations and stories that connect well with urbanism narratives. `momepy` manages IDs between tessellation, buildings and blocks making it easy to choose the appropriate entity for visualising morphometrics.  
+
+```{r}
+#| fig-align: center
+
+ggplot() + 
+    geom_sf(data = buildings_with_suburb) +
+    geom_sf(data = blocks_with_suburb, fill = NA, colour = "red") + 
+    theme_void()
+```
+
+The last piece in generating morphometrics for discovering urban typologies is going from dimensional to contextual metrics. If we take the `convexity` metric derived from the tessellation cell, we see that generating it for each cell (RHS) has a mosaic pattern where adjacent cells can have very different values. Contextual metrics smooth out using the percentiles from the neighbourhood of adjacent cells. This is done by abstracting the geometries (e.g. tessellation polygons) into a spatial graph to find nearest neighbours one or N steps away. There is a great introduction to spatial graphs on the Spatial Data Science for Social Geography (SDS4SG) course by the author of the `momepy` package [@SpaceMathSpatial]. 
+
+```{r}
+p1 <- ggplot(perc_with_suburb) + 
+    geom_sf(aes(fill=convexity_50)) +
+    theme_void() + 
+    scale_fill_viridis_c(
+        limits = c(0.6, 1),      # <-- unify scale
+        breaks = seq(0.6, 1, 0.2),
+        name   = "Convexity 50"
+    )
+
+
+p2 <- ggplot(tessellation_with_suburb) + 
+    geom_sf(aes(fill = convexity)) +
+    theme_void() + 
+    scale_fill_viridis_c(
+        limits = c(0.6, 1),      # <-- unify scale
+        breaks = seq(0.6, 1, 0.2),
+        name   = "Convexity"
+    )
+
+wrap_plots(p1, p2) + plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+```

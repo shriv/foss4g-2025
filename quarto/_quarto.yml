@@ -1,0 +1,34 @@
+project:
+  type: book
+  output-dir: _site
+  resources:
+    - "css/"
+    - "js/"
+    - "*.html"
+
+book:
+  title: "Exploring urban form in New Zealand"
+  author: "Shrividya Ravi"
+  chapters:
+    - index.qmd
+    - basics.qmd
+    - morphometrics.qmd
+    - typologies_wgtn.qmd
+    - typologies_akl.qmd
+    - references.qmd
+
+bibliography: references.bib
+csl: "ieee.csl"
+
+format:
+  html:
+    toc: true
+    theme: cosmo
+    self-contained: true
+    number-sections: true
+    tbl-cap-location: top
+    css: styles.css
+
+execute:
+  echo: false
+  warning: false

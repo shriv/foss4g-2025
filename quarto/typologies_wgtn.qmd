@@ -1,0 +1,144 @@
+# Wellington typologies {#sec-types-wgtn}
+
+
+```{r}
+library(dplyr)
+library(reticulate)
+library(sf)
+library(arrow)
+library(geoarrow)
+library(here)
+library(ggplot2)
+library(purrr)
+library(patchwork)
+source(here("R", "plots.R"))
+use_python("../.venv/bin/python")
+```
+
+```{python, output=F}
+import os
+import numpy as np
+import pandas as pd
+
+os.chdir("../")
+import python.clustering as cl
+```
+
+```{r, output=F}
+buildings <- open_dataset(here("data", "outputs", "osm_buildings_enriched_Wellington.parquet")) |> st_as_sf()
+suburbs <- st_read(here("data", "nz-suburbs-and-localities.gpkg"))
+
+wgtn_tla <- suburbs |> filter(territorial_authority == "Wellington City")
+```
+
+```{python, output=F}
+# load percentiles processed data
+pj = pd.read_parquet("../data/outputs/percentiles_joined_Wellington.parquet")
+
+# run clustering
+cgram = cl.clustering(pj)
+```
+
+We're now ready to combine all the derived morphometrics into a simple algorithm clusters tessellation cells that are similar. The identified clusters represent a _spatial typology_ for the area we're studying. The main idea of _unsupervised_ clustering is that we don't have a pre-determined idea of how many clusters we expect. Instead, we try many different options and use quantitative metrics to choose the one where members of the cluster are both more similar to each other, and clusters are well separated. 
+
+Quantitative metrics can be used in two main ways: we can use visual inspection of a very useful tool called a "clustergram" to qualitatively evaluate which clustering option is the most stable and we can use the pattern in scores and use the cluster value of the minimum or maximum score depending on the metric. 
+
+Let's start with the clustergram. This visualisation shows that there is an initial stable set of clusters (2-5) and then another stable set of splits from around 7-10 clusters. While useful to see how the tessellation cells get split and which ones move to different clusters, it's hard to identify the best cluster number from this alone for Wellington. 
+
+> The ideal case does not exist. We ultimately need to make a decision on the optimal number of clusters. Clustergam gives us additional insights into what happens between different options, how it splits. [@IntroductionClustergramClustergram]
+
+
+```{python}
+#| fig-align: center
+#| height: 70%
+#| width: 70%
+cl.static_clustergram(cgram, 5)
+```
+
+
+So let's try a common clustering metric: the Davies-Bouldin (D-B) score. This score measures cluster compactness against cluster separation. The best cluster number is one where the D-B score is minimised. For Wellington, there is a clear winner: 5 clusters. 
+
+- **Cluster compactness**: How close data points are to the center of their own cluster.
+
+- **Cluster separation**: How far apart different clusters are from each other. 
+
+```{python}
+#| fig-align: center
+#| height: 70%
+#| width: 70%
+cl.clustering_scores_plot(cgram)
+```
+
+```{python}
+best_cluster = cl.best_cluster_number(cgram, num_clusters=20)
+cluster_labels = cgram.labels[best_cluster].values
+```
+
+
+```{r}
+# Get data from python
+buildings["cluster"] <- as.factor(py$cluster_labels)
+
+# Filter to Wellington TLA for visualisation
+buildings_with_suburb <- st_join(
+  buildings, suburbs |> 
+    filter(territorial_authority == "Wellington City") |> 
+  dplyr::select(name, territorial_authority) |> 
+  st_transform(2193), join = st_within, left = TRUE) |> 
+  filter(territorial_authority == "Wellington City")
+```
+
+If we plot the cluster assignment, we can see it matches our contextual understanding of the city. Note, cluster 3 is an artefact of the TLA bounding box and is actually outside Wellington City boundaries. 
+
+For those familiar with Wellington, we can see how the typologies match its quirks: 
+
+- flat areas mostly adjacent to the city centre e.g. Newtown (cluster 2)
+- suburbs on the hills (cluster 1)
+- a high density CBD (cluster 4)
+- industrial areas e.g. Ngauranga and Kaiwharawhara (cluster 0)
+
+```{r}
+# Plotting only a subset of buildings to make the render faster
+
+ggplot() + 
+    geom_sf(data = wgtn_tla, fill = NA, lwd = 0.5) +
+    geom_sf(data = buildings_with_suburb |> sample_frac(0.5), aes(fill = cluster, colour=cluster))  + 
+    coord_sf() +
+    theme_void() +
+    theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```
+
+<br> 
+
+One of the advantages of this city-wide clustering is its identification of similar urban typologies beyond our contextual understanding. For example, there are several more areas around Wellington that are similar to Newtown: Karori, Miramar, Island Bay and Berhampore as well as "village centres" that are typically on ridges or plateaus in the surrounding hilly suburbia. 
+
+```{r}
+
+plots <- map(
+    .x = c("Newtown", "Karori", "Johnsonville"), 
+    ~ generate_suburb_clusters_plots(buildings_with_suburb, .x)
+    )
+
+wrap_plots(plots, ncol = 3) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```
+
+
+Since the "flat and accessible" typology is much more prevalent across the south of Wellington, we can expect increased growth here and opportunities for creating higher density housing by enabling a highly connected city via public transport and cycling lanes.  
+
+```{r}
+cols <- c("2" = "#00BF7D")
+
+ggplot() + 
+  geom_sf(data = wgtn_tla, fill = NA, lwd = 0.5) +
+  geom_sf(data = buildings_with_suburb |> filter(cluster == "2"), aes(fill = cluster, colour=cluster) ) + 
+  scale_fill_manual(values = cols) +
+  scale_colour_manual(values = cols) +
+  coord_sf(crs = st_crs(2193)) +
+  theme_void()
+```
+
+The clustering approach has only used a subset of the [available metrics in momepy](https://docs.momepy.org/en/v0.9.0/api.html). Detailed analysis of typologies should incorporate more contextual metrics. Deriving spatial signatures (combining form and function) [@arribas-belSpatialSignaturesUnderstanding2022] would be a highly valuable output for use with urban planning. 

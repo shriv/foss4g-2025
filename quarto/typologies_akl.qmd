@@ -1,0 +1,189 @@
+# Auckland typologies {#sec-types-akl}
+
+
+As the largest city in New Zealand by both area and population, the urban complexity of Auckland is fascinating to study. The approach is the same as that done for Wellington but the memory requirements are considerably greater. The code runs within a few minutes on an M2 Macbook Pro with 16 GB RAM but less powerful laptops might struggle. If that is the case, feel free to adjust the bounding box of Auckland OR run the code on a more specced out cloud computer. 
+
+Like Wellington, the extent of Auckland is limited to "urban Auckland" using the urban/rural geographies defined by Statistics New Zealand. This is especially helpful for Auckland as the TLA and region are considerably larger than the urban extent and classifying rural typologies doesn't add much to the insights for the corresponding increase in computational effort. 
+
+Following the same approach as Wellington with the clustergram (not shown here) and the Davies-Bouldin score  we find a convenient "sweet spot" set of 14 clusters for Auckland. While the cluster decision was relatively easier for Wellington, we need to make a more considered choice for Auckland. This is often the case for unsupervised clustering where a clear winner is not always found [@IntroductionClustergramClustergram]. 
+
+```{r}
+library(dplyr)
+library(reticulate)
+library(sf)
+library(arrow)
+library(geoarrow)
+library(here)
+library(ggplot2)
+library(purrr)
+library(patchwork)
+library(kableExtra)
+source(here("R", "plots.R"))
+use_python("../.venv/bin/python")
+```
+
+```{python, output=F}
+import os
+import numpy as np
+import pandas as pd
+
+os.chdir("../")
+import python.clustering as cl
+# load percentiles processed data
+pj = pd.read_parquet("data/outputs/percentiles_joined_Auckland.parquet")
+```
+
+```{r, output=F}
+buildings <- open_dataset(here("data", "outputs", "osm_buildings_enriched_Auckland.parquet")) |> st_as_sf()
+suburbs <- st_read(here("data","nz-suburbs-and-localities.gpkg"))
+ur <- st_read(here("data","urban-rural-2025-clipped.gpkg"))
+
+akl_ns <- ur |> 
+    st_transform(2193) |> 
+    filter (UR2025_V1_00_NAME == "Auckland") |> 
+    st_cast("POLYGON")  |>  
+    mutate(area = st_area(geom))  |> 
+    arrange(desc(area))  |> 
+    slice(1:2)
+```
+
+
+```{python, output=F}
+# run clustering
+cgram = cl.clustering(pj, num_clusters=20)
+```
+
+
+```{python}
+#| fig-align: center
+#| height: 70%
+#| width: 70%
+cl.clustering_scores_plot(cgram)
+```
+
+```{python}
+best_cluster = cl.best_cluster_number(cgram, num_clusters=20)
+cluster_labels = cgram.labels[15].values
+```
+
+
+```{r}
+# Get data from python
+buildings["cluster"] <- as.factor(py$cluster_labels)
+
+# Filter to Auckland for visualisation
+buildings_with_suburb <- st_join(
+  buildings, suburbs |> 
+    filter(territorial_authority == "Auckland") |> 
+  dplyr::select(name, territorial_authority) |> 
+  st_transform(2193), join = st_within, left = TRUE) |> 
+  filter(territorial_authority == "Auckland") 
+```
+
+Plotting `{r} py$best_cluster` clusters on a single map doesn't show the typologies as clearly but we can get into the details by subsetting the data: either by suburb or by cluster type.  
+
+```{r}
+#| fig-align: center
+# Plotting only a subset of buildings to make the render faster
+ggplot() + 
+    geom_sf(data = akl_ns, fill = NA, lwd=0.5) +
+    geom_sf(data = buildings_with_suburb |> sample_frac(0.2), aes(fill = cluster, colour=cluster))  + 
+    coord_sf() +
+    theme_void()  +
+    theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```
+
+In @sec-basics we questioned if the residential areas within three Auckland suburbs are likely to be similar? Our clustering algorithm shows that only the block layouts of Ponsonby and Grey Lynn are the same typology while the curvilinear streets and cul-de-sacs of the residential part of East Tāmaki belong to a completely different cluster. 
+
+```{r}
+#| fig-align: center
+plots <- map(
+    .x = c("East Tāmaki", "Ponsonby", "Grey Lynn"), 
+    ~ generate_suburb_clusters_plots(buildings_with_suburb, .x)
+    )
+
+wrap_plots(plots, ncol = 3) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```
+
+Hierarchical clustering is a clever little technique to see how closely connected the different typologies. It is a rough estimate as it only separates clusters using the mean value of all the morphometrics but we can pick out some interesting insights. First thing we see is a connection back to biology: a phylogenetic tree of how different species came to be. Here, we can interpret the dendrogram as typologies that are split close together are more similar than ones further way. Finding the specific metrics that generate the splits in the tree would be an interesting future analysis. 
+
+```{python}
+pj['cluster'] = cluster_labels
+cl.cluster_hierarchy(pj)
+```
+
+We can summarise suburbs in Auckland by their most dominant typology. Note, we're only listing suburbs with more than 100 buildings. Some suburbs, like Takapuna have a dominant typology that only represents a small fraction of buildings because it has many other typologies within its boundaries. 
+
+```{r}
+suburb_types <- buildings_with_suburb |> 
+  st_drop_geometry() |> 
+  group_by(name, cluster) |> 
+  summarise(buildings_in_cluster = n()) |> 
+  ungroup() |> 
+  group_by(name) |> 
+  mutate(
+    total_buildings = sum(buildings_in_cluster), 
+    cluster_fraction = buildings_in_cluster / total_buildings)
+
+suburb_summary <- suburb_types  |> 
+  filter(total_buildings > 100)  |> 
+  group_by(name)  |> 
+  arrange(desc(cluster_fraction))  |> 
+  slice(1) 
+  
+suburb_summary |> 
+  kbl() |> 
+  kable_styling() |> 
+  scroll_box(width = "700px", height = "800px")
+```
+
+<br>
+
+Let's look at the distribution of the clusters that Grey Lynn, Ponsonby and Auckland Central belong to. They are clearly the minority in the city!
+
+```{r}
+central_suburb_clusters <- suburb_summary |> 
+  filter(name %in% c("Grey Lynn", "Ponsonby", "Auckland Central")) |>
+  pull(cluster) |> 
+  unique()
+
+albany_tamaki_clusters <- suburb_summary |> 
+  filter(name %in% c("Albany", "East Tāmaki Heights")) |>
+  pull(cluster) |> 
+  unique()
+```
+
+```{r}
+#| fig-align: center
+
+plots <- map(
+    .x = central_suburb_clusters, 
+    ~ generate_clusters_plots(buildings_with_suburb, akl_ns, .x)
+    )
+
+wrap_plots(plots, ncol = length(central_suburb_clusters)) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```
+
+
+However, if we look at the distribution of typologies belonging to some newer parts of Auckland like Albany and East Tāmaki Heights, we see that they are popular beyond the suburb and dominate in specific parts of the city. 
+
+```{r}
+#| fig-align: center
+
+plots <- map(
+    .x = albany_tamaki_clusters, 
+    ~ generate_clusters_plots(buildings_with_suburb, akl_ns, .x)
+    )
+
+wrap_plots(plots, ncol = length(albany_tamaki_clusters)) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
+```

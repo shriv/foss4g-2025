@@ -1,0 +1,107 @@
+# Simple analysis {#sec-basics}
+The most common and tractable analysis of urban form is through study of visualisations like figure-ground diagrams. Below we see figure-ground of three Auckland suburbs: Ponsonby, East Tāmaki and Grey Lynn. With no prior knowledge we can easily surmise that Grey Lynn and Ponsonby are largely residential suburbs with a strong grid layout while East Tāmaki is a mixed area with large buildings in the western part - mostly likely industrial given their large footprint and inter-building separation. 
+
+
+```{r}
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(arrow)
+library(geoarrow)
+library(here)
+library(glue)
+library(purrr)
+library(patchwork)
+source(here("R", "street-polar.R"))
+```
+
+```{r, output=FALSE}
+# Load suburbs data
+suburbs <- st_read(here::here("data", "nz-suburbs-and-localities.gpkg"))
+
+# Load OSM data
+get_buildings <- function(urban_area){
+    open_dataset(here::here("data", "outputs", glue("osm_buildings_enriched_{urban_area}.parquet"))) |> st_as_sf() |> mutate(suburb = urban_area)
+}
+
+get_streets <- function(urban_area){
+    open_dataset(here::here("data", "outputs", glue("osm_streets_enriched_{urban_area}.parquet"))) |> st_as_sf() |> mutate(suburb = urban_area)
+}
+
+buildings <- map_df(.x = list("East Tāmaki", "Ponsonby", "Grey Lynn"), .f = get_buildings)
+
+streets <- map_df(.x = list("East Tāmaki", "Ponsonby", "Grey Lynn"), .f = get_streets)
+
+buildings_with_suburb <- st_join(buildings, suburbs |> filter(territorial_authority == "Auckland") |> dplyr::select(name) |> st_transform(2193), join = st_within, left = TRUE)
+
+streets_with_suburb <- st_join(streets, suburbs |> filter(territorial_authority == "Auckland") |> dplyr::select(name) |> st_transform(2193), join = st_within, left = TRUE)
+```
+
+```{r}
+#| fig-align: center
+#| out-width: 100%
+# Generate one ggplot per suburb
+generate_figure_ground <- function(buildings_df, suburb_name){
+    p <- ggplot() + 
+        geom_sf(data = buildings_df |> filter(name==suburb_name), colour = 'grey60')  + 
+        coord_sf(expand=FALSE) +
+        theme_void() +
+        labs(title = suburb_name) + 
+        theme(plot.title = element_text(hjust = 0.5)) 
+    return(p)
+}
+
+plots <- map(
+    .x = c("East Tāmaki", "Ponsonby", "Grey Lynn"), 
+    ~ generate_figure_ground(buildings_with_suburb, .x)
+    )
+
+wrap_plots(plots, ncol = 3)
+```
+
+The street network is another structural element we can consider though here it's harder to draw conclusions since the area covered by each plot is not the same. Visual comparisons are best done on the same scale. With different area covered by each subplot it's not possible to say that the eastern part of East Tāmaki has a more concentrated street layout compared to the other suburbs. Already we're against a limitation of visual methods: getting the scale is crucial and comparison studies of differently sized areas (like suburbs) are not easy. 
+
+```{r}
+#| fig.margin: false
+#| fig-align: center
+#| out-width: 100%
+
+# Generate one ggplot per suburb
+generate_street_plots <- function(streets_df, suburb_name){
+    p <- ggplot() + 
+        geom_sf(data = streets_df |> filter(name==suburb_name), colour = 'grey60')  + 
+        coord_sf() +
+        theme_void() +
+        labs(title = suburb_name) + 
+        theme(plot.title = element_text(hjust = 0.5)) 
+
+    return(p)
+}
+
+plots <- map(
+    .x = c("East Tāmaki", "Ponsonby", "Grey Lynn"), 
+    ~ generate_street_plots(streets_with_suburb, .x)
+    )
+
+wrap_plots(plots, ncol = 3) &
+  theme(
+    plot.margin = margin(0, 0, 0, 0),
+    panel.spacing = unit(0, "lines"),
+    legend.margin = margin(0, 0, 0, 0)
+  )
+```
+
+Reducing geometries to metrics helps us move away from the area constraint. Here we see every street network linestrings summarised into a bearing angle (with North being 0$^{\deg}$). Now we can easily tell that Ponsonby has a very strong rectangular grid layout while Grey Lynn looks like a grid arrangement but the streets are oriented across many different angles. Again, not obviously so but East Tāmaki has an underlying grid for some major street segments but also many smaller streets that are spread across all angles. 
+
+```{r}
+#| fig.margin: false
+#| fig-align: center
+#| out-width: 100%
+
+plots <- map(
+    .x = c("East Tāmaki", "Ponsonby", "Grey Lynn"), 
+    ~ generate_polar_plot(.x)
+    )
+
+wrap_plots(plots, ncol = 3)
+```

@@ -1,0 +1,12 @@
+*.pyc
+*.pyo
+.DS_Store
+__pycache__/
+.quarto/
+.venv/
+cache/
+data/buildings
+data/outputs
+data/streets
+extras/
+*.gpkg

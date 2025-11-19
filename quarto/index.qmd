@@ -1,0 +1,17 @@
+# Introduction {#sec-intro}
+
+This is the accompnanying web-book for the FOSS4G 2025 talk. Slides for the talk are available in the Github repo. 
+
+There are many ways to explore urban form using digital methods. The one we'll delve into is the analysis of urban character via data science approaches coined as "spatial typologies": one part of the dual approach of spatial signatures that combines form (typologies) and function. 
+
+> The spatial signatures are thus a delineation that divides geographical space based on its appearance (form) and how it is used (function)[@arribas-belSpatialSignaturesUnderstanding2022]. 
+
+ Spatial typologies are generated from from many different metrics that describe the structure of urban space. In this talk, we will start simple: deriving typologies of two New Zealand cities (Auckland and Wellington) using structural characteristics alone. While this will only be covered briefly, the value of spatial typologies and its extension to signatures goes beyond an interesting exercise with FOSS and can be especially relevant in urban planning. 
+
+> For policy-makers, the spatial signatures provide a framework for detailed spatial understanding of the cities and territories their decisions affect. They are useful both in the global north, where cities are constantly recast and retrofitted, as well as the global south, where most of the new urbanisation is currently taking place [@arribas-belSpatialSignaturesUnderstanding2022]. 
+
+
+The code to generate spatial typologies uses the Python package `momepy` [@fleischmannMomepyUrbanMorphology2019] and mostly replicates the guide ["Simplified detection of urban types"](https://docs.momepy.org/en/v0.9.0/examples/clustering.html#Clustering). I've extented the use case to New Zealand cities with datasets in the Github repo for convenience. I've also tried to explain the approach taken in the package guide as well as describing the derived typologies and their potential consequences for Wellington and Auckland. While the majority of the code is in Python, visualisations have been done in R.
+
+Preparing this talk has been an enjoyable learning experience for me and I hope it helps others on their journey in exploring cities with the power of FOSS4G. Time permitting, it's my hope that the introductory work covered here will be extended in the future. 
+
